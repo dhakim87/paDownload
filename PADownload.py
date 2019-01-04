@@ -100,6 +100,7 @@ def downloadImage(url):
 
 GENE_ID = None
 SEARCH = None
+XML = None
 
 for arg in sys.argv[1:]:
     ss = arg.split("=")
@@ -108,16 +109,22 @@ for arg in sys.argv[1:]:
             GENE_ID = ss[1]
         elif ss[0] == "SEARCH":
             SEARCH = ss[1]
+        elif ss[0] == "XML":
+            XML = ss[1]
 
 if GENE_ID is not None:
     proteinAtlasGet(GENE_ID)
 elif SEARCH is not None:
     proteinAtlasSearch(SEARCH);
+elif XML is not None:
+    downloadImages(XML);
 else:
     print "Usage: "
     print "python " + sys.argv[0] + " ID=<ensemblGeneID>"
     print "-OR-"
     print "python " + sys.argv[0] + " SEARCH=<search string>"
+    print "-OR-"
+    print "python " + sys.argv[0] + " XML=<pathToLocalXMLFile>"
     print ""
     print "Ex: python " + sys.argv[0] + " ID=ENSG00000134057"
     print "Ex: python " + sys.argv[0] + " SEARCH=\"prognostic:Breast cancer\""
