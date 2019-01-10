@@ -41,7 +41,70 @@ def downloadXML(url, outputFileID):
     else:
         print("Already Downloaded, skip!");
 
-    downloadImages(outputXML)
+    downloadImagesStreaming(outputXML)
+
+#Ugh, the full protein atlas xml is 8 gigs, discard each entry after handling it.
+def downloadImagesStreaming(xmlFile):
+    root = None;
+    nsmap = {}
+    tagStack = []
+    activeEntry = False;
+    for event, elem in ET.iterparse(xmlFile, events=('start', 'end', 'start-ns', 'end-ns')):
+        if event == 'start-ns':
+            ns, url = elem
+            nsmap[ns] = url;
+        if event == 'start':
+#            print("START: " + elem.tag);
+            if root is None:
+                root = elem;
+            tagStack.append(elem.tag);
+            if elem.tag == "entry":
+                activeEntry = True;
+            
+        if event == 'end':
+#            print("END  : " + elem.tag);
+            if tagStack[-1] != elem.tag:
+                print("BAD XML:  End Tag: " + elem.tag + " But expected: " + tagStack[-1]);
+                raise error;
+            tagStack.pop();
+
+            if elem.tag == "entry":
+                handleEntry(elem);
+                activeEntry = False;
+            if activeEntry == False:
+                #Wow this is a huge xml file.
+                elem.clear();
+                root.clear();
+            
+    print nsmap;
+
+def handleEntry(entry):
+    print("Name: " + entry.find("./name").text)
+    db = entry.find("./identifier").get("db")
+    id = entry.find("./identifier").get("id")
+
+    if db != "Ensembl":
+        print("UNSUPPORTED DB ID: " + db)
+        return;
+
+    for antibody in entry.findall("./antibody"):
+        print("Antibody ID: " + antibody.get("id"))
+        for cellExpression in antibody.findall("./cellExpression"):
+            source = cellExpression.get("source");
+            technology = cellExpression.get("technology");
+            print("Source: " + source + " Technology: " + technology)
+            for subAssay in cellExpression.findall("./subAssay"):
+                assayType = subAssay.get("type")
+                if assayType != "human":
+                    print("Skipping " + assayType + " assay.")
+                    continue
+                for data in subAssay.findall("./data"):
+                    print("Cell Line: " + data.find("cellLine").text)
+                    for assayImage in data.findall("./assayImage"):
+                        for imageUrl in assayImage.findall("./image/imageUrl"):
+                            print("URL: " + imageUrl.text);
+                            #TODO FIXME HACK:  Figure out what metadata we want to keep with each image.  Should probably make a simple sql db or something.
+                            downloadImage(imageUrl.text);
 
 
 #Pull down all of the human cell line assays.  Modify this function to pull a different set of images.
@@ -51,32 +114,7 @@ def downloadImages(xmlFile):
     print("Retrieving Images...");
     root = tree.getroot()
     for entry in root.findall("./entry"):
-        print("Name: " + entry.find("./name").text)
-        db = entry.find("./identifier").get("db")
-        id = entry.find("./identifier").get("id")
-
-        if db != "Ensembl":
-            print("UNSUPPORTED DB ID: " + db)
-            continue
-
-        for antibody in entry.findall("./antibody"):
-            print("Antibody ID: " + antibody.get("id"))
-            for cellExpression in antibody.findall("./cellExpression"):
-                source = cellExpression.get("source");
-                technology = cellExpression.get("technology");
-                print("Source: " + source + " Technology: " + technology)
-                for subAssay in cellExpression.findall("./subAssay"):
-                    assayType = subAssay.get("type")
-                    if assayType != "human":
-                        print("Skipping " + assayType + " assay.")
-                        continue
-                    for data in subAssay.findall("./data"):
-                        print("Cell Line: " + data.find("cellLine").text)
-                        for assayImage in data.findall("./assayImage"):
-                            for imageUrl in assayImage.findall("./image/imageUrl"):
-                                print("URL: " + imageUrl.text);
-                                #TODO FIXME HACK:  Figure out what metadata we want to keep with each image.  Should probably make a simple sql db or something.
-                                downloadImage(imageUrl.text);
+        handleEntry(entry);
 
 def downloadImage(url):
     #TODO FIXME HACK:  May need a force in case of partial image downloads.
