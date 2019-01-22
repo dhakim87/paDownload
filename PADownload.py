@@ -9,6 +9,8 @@ import sys
 from urlparse import urlparse
 import urllib
 import uuid
+import sqlite3
+
 
 #Example EnsemblGeneID Gene ID: ENSG00000134057
 def proteinAtlasGet(ensemblGeneID):
@@ -49,36 +51,51 @@ def downloadImagesStreaming(xmlFile):
     nsmap = {}
     tagStack = []
     activeEntry = False;
-    for event, elem in ET.iterparse(xmlFile, events=('start', 'end', 'start-ns', 'end-ns')):
-        if event == 'start-ns':
-            ns, url = elem
-            nsmap[ns] = url;
-        if event == 'start':
-#            print("START: " + elem.tag);
-            if root is None:
-                root = elem;
-            tagStack.append(elem.tag);
-            if elem.tag == "entry":
-                activeEntry = True;
-            
-        if event == 'end':
-#            print("END  : " + elem.tag);
-            if tagStack[-1] != elem.tag:
-                print("BAD XML:  End Tag: " + elem.tag + " But expected: " + tagStack[-1]);
-                raise error;
-            tagStack.pop();
+    conn = sqlite3.connect('images.db')
+    c = conn.cursor()
 
-            if elem.tag == "entry":
-                handleEntry(elem);
-                activeEntry = False;
-            if activeEntry == False:
-                #Wow this is a huge xml file.
-                elem.clear();
-                root.clear();
+    # Create table
+    c.execute('''CREATE TABLE IF NOT EXISTS image
+                 (url TEXT, protein TEXT, antibody TEXT, cell_line TEXT, location TEXT)''')
+    c.execute('''CREATE UNIQUE INDEX IF NOT EXISTS image_no_dups ON image(url, protein, antibody, cell_line, location)''')
+    
+    try:
+        for event, elem in ET.iterparse(xmlFile, events=('start', 'end', 'start-ns', 'end-ns')):
+            if event == 'start-ns':
+                ns, url = elem
+                nsmap[ns] = url;
+            if event == 'start':
+    #            print("START: " + elem.tag);
+                if root is None:
+                    root = elem;
+                tagStack.append(elem.tag);
+                if elem.tag == "entry":
+                    activeEntry = True;
             
+            if event == 'end':
+    #            print("END  : " + elem.tag);
+                if tagStack[-1] != elem.tag:
+                    print("BAD XML:  End Tag: " + elem.tag + " But expected: " + tagStack[-1]);
+                    raise error;
+                tagStack.pop();
+
+                if elem.tag == "entry":
+                    handleEntry(elem, c);
+                    activeEntry = False;
+                if activeEntry == False:
+                    #Wow this is a huge xml file.
+                    elem.clear();
+                    root.clear();
+    except KeyboardInterrupt:
+        print "Canceled By User";
+        pass;
+
+    conn.commit()
+    conn.close()
+
     print nsmap;
 
-def handleEntry(entry):
+def handleEntry(entry, cursor):
     print("Name: " + entry.find("./name").text)
     db = entry.find("./identifier").get("db")
     id = entry.find("./identifier").get("id")
@@ -100,21 +117,24 @@ def handleEntry(entry):
                     continue
                 for data in subAssay.findall("./data"):
                     print("Cell Line: " + data.find("cellLine").text)
+                    location = data.find("location")
+                    if location is None:
+                        location = ""
+                    else:
+                        location = location.text
+                    print("Location: " + location)
                     for assayImage in data.findall("./assayImage"):
                         for imageUrl in assayImage.findall("./image/imageUrl"):
                             print("URL: " + imageUrl.text);
-                            #TODO FIXME HACK:  Figure out what metadata we want to keep with each image.  Should probably make a simple sql db or something.
-                            downloadImage(imageUrl.text);
-
-
-#Pull down all of the human cell line assays.  Modify this function to pull a different set of images.
-def downloadImages(xmlFile):
-    print("Parsing xml (This may take a few minutes for large numbers of search results)...")
-    tree = ET.parse(xmlFile)
-    print("Retrieving Images...");
-    root = tree.getroot()
-    for entry in root.findall("./entry"):
-        handleEntry(entry);
+                            
+                            if SHOULD_DOWNLOAD:
+                                downloadImage(imageUrl.text);
+                            else:
+                                print("Downloads Disabled, only inserting into sql database")
+                            
+                            tuple = (imageUrl.text, entry.find("./name").text, antibody.get("id"), data.find("cellLine").text, location)
+                            #(url TEXT, protein TEXT, antibody TEXT, cell_line TEXT)''')
+                            cursor.execute("INSERT OR IGNORE INTO image VALUES (?,?,?,?,?)", tuple)
 
 def downloadImage(url):
     #TODO FIXME HACK:  May need a force in case of partial image downloads.
@@ -140,6 +160,8 @@ GENE_ID = None
 SEARCH = None
 XML = None
 
+SHOULD_DOWNLOAD=True
+
 for arg in sys.argv[1:]:
     ss = arg.split("=")
     if len(ss) >= 2:
@@ -149,13 +171,19 @@ for arg in sys.argv[1:]:
             SEARCH = ss[1]
         elif ss[0] == "XML":
             XML = ss[1]
+        else:
+            raise Exception("Unknown Command: " + arg);
+    elif arg == "--no-download":
+        SHOULD_DOWNLOAD = False
+    else:
+        raise Exception("Unknown Command: " + arg);
 
 if GENE_ID is not None:
     proteinAtlasGet(GENE_ID)
 elif SEARCH is not None:
     proteinAtlasSearch(SEARCH);
 elif XML is not None:
-    downloadImages(XML);
+    downloadImagesStreaming(XML);
 else:
     print "Usage: "
     print "python " + sys.argv[0] + " ID=<ensemblGeneID>"
@@ -166,3 +194,7 @@ else:
     print ""
     print "Ex: python " + sys.argv[0] + " ID=ENSG00000134057"
     print "Ex: python " + sys.argv[0] + " SEARCH=\"prognostic:Breast cancer\""
+    print ""
+    print "Options: "
+    print "--no-download    //This will build the images.db database but will not download any imagery"
+
