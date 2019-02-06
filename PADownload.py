@@ -43,10 +43,42 @@ def downloadXML(url, outputFileID):
     else:
         print("Already Downloaded, skip!");
 
-    downloadImagesStreaming(outputXML)
+    downloadImagesStreamingXML(outputXML)
+
+def downloadImagesDB(dbPath, proteinListPath):
+    urlsToDownload = []
+    if proteinListPath is None:
+        #Download all urls
+        conn = sqlite3.connect(dbPath)
+        cur = conn.cursor()
+        cur.execute("SELECT url FROM image")
+        rows = cur.fetchall()
+        for row in rows:
+            urlsToDownload.append(row[0])
+        conn.close()
+    else:
+        proteinList = []
+        with open(proteinListPath) as proteinFile:
+            for line in proteinFile:
+                proteinList.append(line.strip())
+    
+        print "Proteins: ", len(proteinList)
+    
+        #Download urls associated with named proteins
+        conn = sqlite3.connect(dbPath)
+        for protein in proteinList:
+            cur = conn.cursor()
+            cur.execute("SELECT url FROM image WHERE protein=?", (protein,))
+            rows = cur.fetchall()
+            for row in rows:
+                urlsToDownload.append(row[0])
+        conn.close()
+
+    for url in urlsToDownload:
+        downloadImage(url)
 
 #Ugh, the full protein atlas xml is 8 gigs, discard each entry after handling it.
-def downloadImagesStreaming(xmlFile):
+def downloadImagesStreamingXML(xmlFile):
     root = None;
     nsmap = {}
     tagStack = []
@@ -126,17 +158,16 @@ def handleEntry(entry, cursor):
                     for assayImage in data.findall("./assayImage"):
                         for imageUrl in assayImage.findall("./image/imageUrl"):
                             print("URL: " + imageUrl.text);
-                            
-                            if SHOULD_DOWNLOAD:
-                                downloadImage(imageUrl.text);
-                            else:
-                                print("Downloads Disabled, only inserting into sql database")
-                            
+                            downloadImage(imageUrl.text);
                             tuple = (imageUrl.text, entry.find("./name").text, antibody.get("id"), data.find("cellLine").text, location)
                             #(url TEXT, protein TEXT, antibody TEXT, cell_line TEXT)''')
                             cursor.execute("INSERT OR IGNORE INTO image VALUES (?,?,?,?,?)", tuple)
 
 def downloadImage(url):
+    if not SHOULD_DOWNLOAD:
+        print("Downloads Disabled, Skipping download of: " + url)
+        return
+
     #TODO FIXME HACK:  May need a force in case of partial image downloads.
     parsedTuple = urlparse(url);
     relativePath = parsedTuple[2];
@@ -159,6 +190,8 @@ def downloadImage(url):
 GENE_ID = None
 SEARCH = None
 XML = None
+DB = None
+PROTEIN_LIST = None
 
 SHOULD_DOWNLOAD=True
 
@@ -171,6 +204,10 @@ for arg in sys.argv[1:]:
             SEARCH = ss[1]
         elif ss[0] == "XML":
             XML = ss[1]
+        elif ss[0] == "DB":
+            DB = ss[1]
+        elif ss[0] == "PROTEIN_LIST":
+            PROTEIN_LIST = ss[1]
         else:
             raise Exception("Unknown Command: " + arg);
     elif arg == "--no-download":
@@ -183,7 +220,9 @@ if GENE_ID is not None:
 elif SEARCH is not None:
     proteinAtlasSearch(SEARCH);
 elif XML is not None:
-    downloadImagesStreaming(XML);
+    downloadImagesStreamingXML(XML);
+elif DB is not None:
+    downloadImagesDB(DB, PROTEIN_LIST)
 else:
     print "Usage: "
     print "python " + sys.argv[0] + " ID=<ensemblGeneID>"
@@ -191,6 +230,8 @@ else:
     print "python " + sys.argv[0] + " SEARCH=<search string>"
     print "-OR-"
     print "python " + sys.argv[0] + " XML=<pathToLocalXMLFile>"
+    print "-OR-"
+    print "python " + sys.argv[0] + " DB=<pathToLocalDBFile> PROTEIN_LIST=<pathToNewlineSeparateProteinNames>"
     print ""
     print "Ex: python " + sys.argv[0] + " ID=ENSG00000134057"
     print "Ex: python " + sys.argv[0] + " SEARCH=\"prognostic:Breast cancer\""
