@@ -149,11 +149,11 @@ def handleEntry(entry, cursor):
                     continue
                 for data in subAssay.findall("./data"):
                     print("Cell Line: " + data.find("cellLine").text)
-                    location = data.find("location")
-                    if location is None:
-                        location = ""
-                    else:
-                        location = location.text
+                    
+                    locations = data.findall("location")
+                    location = ""
+                    if len(locations) > 0:
+                        location = "/".join(t.text for t in sorted(locations))
                     print("Location: " + location)
                     for assayImage in data.findall("./assayImage"):
                         for imageUrl in assayImage.findall("./image/imageUrl"):
